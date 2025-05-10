@@ -6,24 +6,34 @@ import logfire
 import asyncio
 import httpx
 import os
+import google.generativeai as genai # Hinzufügen für Google Gemini
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.models.openai import OpenAIModel
-from openai import AsyncOpenAI
+from pydantic_ai.models.google import GoogleGenerativeAIModel # Ändern von OpenAIModel
+# from openai import AsyncOpenAI # Entfernen, da nicht mehr benötigt
 from supabase import Client
 from typing import List
 
 load_dotenv()
 
-llm = os.getenv('LLM_MODEL', 'gpt-4o-mini')
-model = OpenAIModel(llm)
+# Konfiguriere den Google API Key
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY environment variable not set.")
+genai.configure(api_key=GOOGLE_API_KEY)
+
+llm_model_name = os.getenv('LLM_MODEL', 'gemini-1.5-flash-latest')
+embedding_model_name = os.getenv('EMBEDDING_MODEL', 'models/text-embedding-004')
+
+# Verwende GoogleGenerativeAIModel
+model = GoogleGenerativeAIModel(llm_model_name)
 
 logfire.configure(send_to_logfire='if-token-present')
 
 @dataclass
 class PydanticAIDeps:
     supabase: Client
-    openai_client: AsyncOpenAI
+    # openai_client: AsyncOpenAI # Entfernen
 
 system_prompt = """
 You are an expert at Pydantic AI - a Python AI agent framework that you have access to all the documentation to,
@@ -46,14 +56,16 @@ pydantic_ai_expert = Agent(
     retries=2
 )
 
-async def get_embedding(text: str, openai_client: AsyncOpenAI) -> List[float]:
-    """Get embedding vector from OpenAI."""
+async def get_embedding(text: str) -> List[float]: # openai_client entfernt
+    """Get embedding vector from Google."""
     try:
-        response = await openai_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=text
+        # Verwende das specific embedding model von Google
+        result = await genai.embed_content_async(
+            model=embedding_model_name,
+            content=text,
+            task_type="RETRIEVAL_DOCUMENT" # oder "SEMANTIC_SIMILARITY" / "RETRIEVAL_QUERY" je nach Anwendungsfall
         )
-        return response.data[0].embedding
+        return result['embedding']
     except Exception as e:
         print(f"Error getting embedding: {e}")
         return [0] * 1536  # Return zero vector on error
@@ -64,7 +76,7 @@ async def retrieve_relevant_documentation(ctx: RunContext[PydanticAIDeps], user_
     Retrieve relevant documentation chunks based on the query with RAG.
     
     Args:
-        ctx: The context including the Supabase client and OpenAI client
+        ctx: The context including the Supabase client
         user_query: The user's question or query
         
     Returns:
@@ -72,7 +84,7 @@ async def retrieve_relevant_documentation(ctx: RunContext[PydanticAIDeps], user_
     """
     try:
         # Get the embedding for the query
-        query_embedding = await get_embedding(user_query, ctx.deps.openai_client)
+        query_embedding = await get_embedding(user_query) # ctx.deps.openai_client entfernt
         
         # Query Supabase for relevant documents
         result = ctx.deps.supabase.rpc(

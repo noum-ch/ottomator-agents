@@ -9,15 +9,25 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from dotenv import load_dotenv
+import google.generativeai as genai # Hinzufügen für Google Gemini
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
-from openai import AsyncOpenAI
+# from openai import AsyncOpenAI # Entfernen
 from supabase import create_client, Client
 
 load_dotenv()
 
-# Initialize OpenAI and Supabase clients
-openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Konfiguriere den Google API Key
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY environment variable not set in crawl script.")
+genai.configure(api_key=GOOGLE_API_KEY)
+
+llm_model_name = os.getenv('LLM_MODEL', 'gemini-1.5-flash-latest')
+embedding_model_name = os.getenv('EMBEDDING_MODEL', 'models/text-embedding-004')
+
+# Initialize Supabase client
+# openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")) # Entfernen
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_SERVICE_KEY")
@@ -87,27 +97,32 @@ async def get_title_and_summary(chunk: str, url: str) -> Dict[str, str]:
     Keep both title and summary concise but informative."""
     
     try:
-        response = await openai_client.chat.completions.create(
-            model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"URL: {url}\n\nContent:\n{chunk[:1000]}..."}  # Send first 1000 chars for context
+        # Verwende das Google Generative AI Model
+        model = genai.GenerativeModel(llm_model_name)
+        response = await model.generate_content_async(
+            contents=[
+                system_prompt,
+                f"URL: {url}\n\nContent:\n{chunk[:1000]}..."
             ],
-            response_format={ "type": "json_object" }
+            generation_config=genai.types.GenerationConfig(
+                response_mime_type="application/json"
+            )
         )
-        return json.loads(response.choices[0].message.content)
+        # Der Text der Antwort sollte direkt JSON sein, wenn response_mime_type gesetzt ist
+        return json.loads(response.text)
     except Exception as e:
         print(f"Error getting title and summary: {e}")
         return {"title": "Error processing title", "summary": "Error processing summary"}
 
 async def get_embedding(text: str) -> List[float]:
-    """Get embedding vector from OpenAI."""
+    """Get embedding vector from Google."""
     try:
-        response = await openai_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=text
+        result = await genai.embed_content_async(
+            model=embedding_model_name,
+            content=text,
+            task_type="RETRIEVAL_DOCUMENT"
         )
-        return response.data[0].embedding
+        return result['embedding']
     except Exception as e:
         print(f"Error getting embedding: {e}")
         return [0] * 1536  # Return zero vector on error

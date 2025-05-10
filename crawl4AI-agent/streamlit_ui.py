@@ -7,7 +7,8 @@ import streamlit as st
 import json
 import logfire
 from supabase import Client
-from openai import AsyncOpenAI
+# from openai import AsyncOpenAI # Entfernen, da nicht mehr benötigt
+import google.generativeai as genai # Hinzufügen für Google Gemini
 
 # Import all the message part classes
 from pydantic_ai.messages import (
@@ -28,7 +29,13 @@ from pydantic_ai_expert import pydantic_ai_expert, PydanticAIDeps
 from dotenv import load_dotenv
 load_dotenv()
 
-openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Konfiguriere den Google API Key
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY environment variable not set in Streamlit UI.")
+genai.configure(api_key=GOOGLE_API_KEY)
+
+# openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")) # Entfernen
 supabase: Client = Client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_SERVICE_KEY")
@@ -72,8 +79,8 @@ async def run_agent_with_streaming(user_input: str):
     """
     # Prepare dependencies
     deps = PydanticAIDeps(
-        supabase=supabase,
-        openai_client=openai_client
+        supabase=supabase
+        # openai_client entfernt
     )
 
     # Run the agent in a stream
